@@ -1,69 +1,64 @@
-import os
-import logging
-from datetime import datetime
-from dotenv import load_dotenv
-
-from risk.risk_module import RiskManager
-from utils.logger import setup_logger
-from utils.config import get_access_token
+import time
+from utils.slack_notifier import send_slack_message
+from utils.logger import log_info, log_error
+from utils.config import load_env, get_access_token
 from strategies.momentum_strategy import MomentumStrategy
+from risk.risk_module import RiskManager
+from backtest.update_backtest import PortfolioUpdater
+
 
 def main():
-    load_dotenv()
-
-    setup_logger()
-    logger = logging.getLogger(__name__)
-    logger.info("🚀 메인 실행 시작 (모멘텀 전략)")
+    """
+    시스템 트레이딩 메인 실행 (Slack + Logger + Config + 실전 리스크 반영)
+    """
+    send_slack_message("🚀 시스템 트레이딩 시작 (모의투자)", "🤖")
+    log_info("🚀 시스템 트레이딩 시작")
 
     try:
-        # === 환경 변수 ===
-        base_url = os.getenv("BASE_URL")
-        app_key = os.getenv("APP_KEY")
-        app_secret = os.getenv("APP_SECRET")
-        cano = os.getenv("CANO")
+        # 1️⃣ 환경 설정 로드 (모의투자)
+        config = load_env(mode="vts")
+        log_info(f"✅ 환경 설정 로드 완료: {config['BASE_URL']}")
+        send_slack_message("🔧 환경 설정 로드 완료")
 
-        if not all([base_url, app_key, app_secret, cano]):
-            raise EnvironmentError("환경변수(BASE_URL, APP_KEY, APP_SECRET, CANO)가 설정되지 않았습니다.")
-
-        config = {
-            "base_url": base_url,
-            "app_key": app_key,
-            "app_secret": app_secret,
-            "cano": cano,
-        }
-
-        # === 토큰 발급 ===
+        # 2️⃣ Access Token 불러오기
+        send_slack_message("🔑 Access Token 발급 중...")
         token = get_access_token(config)
-        if not token:
-            raise ValueError("ACCESS_TOKEN 발급 실패")
+        config["ACCESS_TOKEN"] = token  # ✅ RiskManager와 연동을 위해 config에 추가
+        log_info("✅ Access Token 정상 발급 완료")
+        send_slack_message("✅ Access Token 정상 발급 완료")
 
-        logger.info("✅ 토큰 발급 성공")
+        # 3️⃣ 종목 업데이트 + 백테스트
+        updater = PortfolioUpdater(mode="vts")
+        updater.run()  # 자동 교체 및 백테스트
+        send_slack_message("✅ 주간 포트폴리오 업데이트 완료")
 
-        # === 리스크 매니저 ===
-        risk_manager = RiskManager(config, token)
+        # 4️⃣ 모멘텀 전략 실행
+        strategy = MomentumStrategy(mode="vts")
+        df_signals = strategy.run()
+        send_slack_message("📊 모멘텀 전략 완료")
 
-        # === 전략 실행 ===
-        strategy = MomentumStrategy(config, token)
-        results = strategy.run()
+        # 5️⃣ 리스크 모듈 적용
+        risk_manager = RiskManager(config)
+        filtered_stocks = risk_manager.apply_risk_filter(df_signals)
 
-        # === 리스크 계산 ===
-        if results and "returns" in results:
-            metrics = risk_manager.calculate_risk_metrics(results["returns"])
-            logger.info(f"리스크 메트릭: {metrics}")
+        send_slack_message(f"🧮 리스크 통과 종목: {filtered_stocks}")
+        log_info(f"🧮 리스크 통과 종목: {filtered_stocks}")
+
+        # 6️⃣ (선택) 매수/매도 실행 로직 (이후 확장 가능)
+        if not filtered_stocks:
+            send_slack_message("⚠️ 리스크 통과 종목 없음 — 매매 생략")
         else:
-            logger.warning("전략 결과에 수익률 데이터가 없음.")
+            log_info(f"💰 투자 가능 종목: {filtered_stocks}")
+
+        # 7️⃣ 로그 및 종료
+        send_slack_message("✅ 시스템 트레이딩 프로세스 정상 종료", "🎯")
+        log_info("✅ 시스템 트레이딩 프로세스 정상 종료")
 
     except Exception as e:
-        logger.error(f"❌ 메인 실행 중 오류 발생: {e}")
-        try:
-            from risk.risk_module import RiskManager
-            rm = RiskManager({}, "")
-            rm.send_slack_alert(f"❌ 메인 실행 오류: {e}")
-        except Exception:
-            pass
+        send_slack_message(f"❌ 오류 발생: {str(e)}", "🚨")
+        log_error(f"❌ 오류 발생: {str(e)}")
+        raise e
 
-    finally:
-        logger.info("🏁 메인 실행 종료")
 
 if __name__ == "__main__":
     main()
