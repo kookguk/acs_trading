@@ -1,87 +1,69 @@
 import os
-import time
-import pandas as pd
+import logging
 from datetime import datetime
-from utils.config import load_env, get_access_token
-from utils.logger import log_info, log_error
-from utils.slack_notifier import send_slack_message
-from strategies.momentum_strategy import MomentumStrategy
+from dotenv import load_dotenv
+
 from risk.risk_module import RiskManager
-from backtest.update_backtest import PortfolioUpdater
-from utils.data_handler import get_daily_price
-import json, requests
-
-
-def place_order(config, token, code, qty, side):
-    """매수/매도 주문"""
-    url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/trading/order-cash"
-    tr_id = "VTTC0802U" if "vts" in config["BASE_URL"] else ("TTTC0802U" if side == "BUY" else "TTTC0801U")
-    headers = {
-        "authorization": f"Bearer {token}",
-        "appkey": config["APP_KEY"],
-        "appsecret": config["APP_SECRET"],
-        "tr_id": tr_id,
-        "content-type": "application/json",
-    }
-    data = {
-        "CANO": config["CANO"],
-        "ACNT_PRDT_CD": config["ACNT_PRDT_CD"],
-        "PDNO": code,
-        "ORD_DVSN": "01",
-        "ORD_QTY": str(qty),
-        "ORD_UNPR": "0",
-    }
-    res = requests.post(url, headers=headers, data=json.dumps(data))
-    return res.json()
-
+from utils.logger import setup_logger
+from utils.config import get_access_token
+from strategies.momentum_strategy import MomentumStrategy
 
 def main():
-    send_slack_message("🚀 시스템 트레이딩 시작 (모의투자)", "🤖")
-    log_info("🚀 시스템 트레이딩 시작")
+    load_dotenv()
+
+    setup_logger()
+    logger = logging.getLogger(__name__)
+    logger.info("🚀 메인 실행 시작 (모멘텀 전략)")
 
     try:
-        # 1️⃣ 환경 로드 및 토큰 발급
-        config = load_env(mode="vts")
+        # === 환경 변수 ===
+        base_url = os.getenv("BASE_URL")
+        app_key = os.getenv("APP_KEY")
+        app_secret = os.getenv("APP_SECRET")
+        cano = os.getenv("CANO")
+
+        if not all([base_url, app_key, app_secret, cano]):
+            raise EnvironmentError("환경변수(BASE_URL, APP_KEY, APP_SECRET, CANO)가 설정되지 않았습니다.")
+
+        config = {
+            "base_url": base_url,
+            "app_key": app_key,
+            "app_secret": app_secret,
+            "cano": cano,
+        }
+
+        # === 토큰 발급 ===
         token = get_access_token(config)
-        send_slack_message("🔑 Access Token 발급 완료")
+        if not token:
+            raise ValueError("ACCESS_TOKEN 발급 실패")
 
-        # 2️⃣ 포트폴리오 업데이트 + 백테스트 (일요일 자동 실행)
-        if datetime.now().weekday() == 6:  # 일요일
-            updater = PortfolioUpdater(mode="vts")
-            updater.run()
+        logger.info("✅ 토큰 발급 성공")
 
-        # 3️⃣ 모멘텀 전략 실행
-        strategy = MomentumStrategy(mode="vts")
-        df_signals = strategy.run()
-        send_slack_message("📊 모멘텀 전략 완료")
-
-        # 4️⃣ 리스크 모듈 적용 (실제 계좌금액 기반)
+        # === 리스크 매니저 ===
         risk_manager = RiskManager(config, token)
-        filtered_stocks = risk_manager.apply_risk_filter(df_signals)
-        send_slack_message(f"🧮 리스크 통과 종목: {filtered_stocks}")
 
-        # 5️⃣ 매매 실행
-        per_stock_invest = risk_manager.portfolio_value * 0.1
-        for code in filtered_stocks:
-            df = get_daily_price(code, mode="vts", count=1)
-            if df.empty:
-                continue
-            price = df["stck_clpr"].iloc[-1]
-            qty = max(int(per_stock_invest // price), 1)
-            result = place_order(config, token, code, qty, "BUY")
-            send_slack_message(f"🟢 {code} 매수 {qty}주 — {result.get('msg1', '응답 없음')}")
-            log_info(f"{code} 매수 완료 ({qty}주)")
+        # === 전략 실행 ===
+        strategy = MomentumStrategy(config, token)
+        results = strategy.run()
 
-            time.sleep(1.0)
-
-        send_slack_message("✅ 모든 거래 완료 — 트레이딩 종료")
-        log_info("✅ 모든 거래 완료 — 트레이딩 종료")
+        # === 리스크 계산 ===
+        if results and "returns" in results:
+            metrics = risk_manager.calculate_risk_metrics(results["returns"])
+            logger.info(f"리스크 메트릭: {metrics}")
+        else:
+            logger.warning("전략 결과에 수익률 데이터가 없음.")
 
     except Exception as e:
-        send_slack_message(f"❌ 오류 발생: {str(e)}", "🚨")
-        log_error(f"❌ 오류 발생: {str(e)}")
-        raise e
+        logger.error(f"❌ 메인 실행 중 오류 발생: {e}")
+        try:
+            from risk.risk_module import RiskManager
+            rm = RiskManager({}, "")
+            rm.send_slack_alert(f"❌ 메인 실행 오류: {e}")
+        except Exception:
+            pass
 
+    finally:
+        logger.info("🏁 메인 실행 종료")
 
 if __name__ == "__main__":
     main()
