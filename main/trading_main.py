@@ -1,56 +1,81 @@
+import os
 import time
-from utils.slack_notifier import send_slack_message
-from utils.logger import log_info, log_error
+import pandas as pd
+from datetime import datetime
 from utils.config import load_env, get_access_token
+from utils.logger import log_info, log_error
+from utils.slack_notifier import send_slack_message
+from strategies.momentum_strategy import MomentumStrategy
+from risk.risk_module import RiskManager
+from backtest.update_backtest import PortfolioUpdater
+from utils.data_handler import get_daily_price
+import json, requests
+
+
+def place_order(config, token, code, qty, side):
+    """매수/매도 주문"""
+    url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/trading/order-cash"
+    tr_id = "VTTC0802U" if "vts" in config["BASE_URL"] else ("TTTC0802U" if side == "BUY" else "TTTC0801U")
+    headers = {
+        "authorization": f"Bearer {token}",
+        "appkey": config["APP_KEY"],
+        "appsecret": config["APP_SECRET"],
+        "tr_id": tr_id,
+        "content-type": "application/json",
+    }
+    data = {
+        "CANO": config["CANO"],
+        "ACNT_PRDT_CD": config["ACNT_PRDT_CD"],
+        "PDNO": code,
+        "ORD_DVSN": "01",
+        "ORD_QTY": str(qty),
+        "ORD_UNPR": "0",
+    }
+    res = requests.post(url, headers=headers, data=json.dumps(data))
+    return res.json()
 
 
 def main():
-    """
-    시스템 트레이딩 메인 실행 (Slack + Logger + Config 연동 버전)
-    """
-    send_slack_message("🚀 시스템 트레이딩 루프 시작", "🤖")
-    log_info("🚀 시스템 트레이딩 루프 시작")
+    send_slack_message("🚀 시스템 트레이딩 시작 (모의투자)", "🤖")
+    log_info("🚀 시스템 트레이딩 시작")
 
     try:
-        # 1️⃣ 환경 설정 로드 (모의투자 / 실전 선택 가능)
-        config = load_env(mode="vts")  # .env_vts 파일 로드
-        log_info(f"✅ 환경 설정 로드 완료: {config['BASE_URL']}")
-        send_slack_message("🔧 환경 설정 로드 완료")
-
-        # 2️⃣ Access Token 불러오기 (캐시 or 재발급)
-        send_slack_message("🔑 Access Token 확인 중...")
+        # 1️⃣ 환경 로드 및 토큰 발급
+        config = load_env(mode="vts")
         token = get_access_token(config)
-        log_info("✅ Access Token 정상 발급 완료")
-        send_slack_message("✅ Access Token 정상 발급 완료")
+        send_slack_message("🔑 Access Token 발급 완료")
 
-        # 3️⃣ 전략 실행 (모멘텀 전략 예시)
-        send_slack_message("📊 모멘텀 전략 계산 중...")
-        log_info("📊 모멘텀 전략 계산 중...")
-        time.sleep(2)
-        strategy_signals = {"005930": "BUY", "000660": "BUY"}  # 예시 시그널
-        send_slack_message(f"📈 전략 결과: {strategy_signals}")
-        log_info(f"전략 결과: {strategy_signals}")
+        # 2️⃣ 포트폴리오 업데이트 + 백테스트 (일요일 자동 실행)
+        if datetime.now().weekday() == 6:  # 일요일
+            updater = PortfolioUpdater(mode="vts")
+            updater.run()
 
-        # 4️⃣ 리스크 체크
-        send_slack_message("🧮 리스크 체크 중...")
-        log_info("🧮 리스크 체크 중...")
-        time.sleep(1)
-        send_slack_message("✅ 리스크 조건 통과 — 주문 진행")
-        log_info("✅ 리스크 조건 통과 — 주문 진행")
+        # 3️⃣ 모멘텀 전략 실행
+        strategy = MomentumStrategy(mode="vts")
+        df_signals = strategy.run()
+        send_slack_message("📊 모멘텀 전략 완료")
 
-        # 5️⃣ 주문 실행 (시뮬레이션)
-        send_slack_message("💰 매수 주문 실행 중...")
-        log_info("💰 매수 주문 실행 중...")
-        time.sleep(1)
-        send_slack_message("✅ 매수 주문 완료 — 삼성전자 100주, SK하이닉스 50주")
-        log_info("✅ 매수 주문 완료 — 삼성전자 100주, SK하이닉스 50주")
+        # 4️⃣ 리스크 모듈 적용 (실제 계좌금액 기반)
+        risk_manager = RiskManager(config, token)
+        filtered_stocks = risk_manager.apply_risk_filter(df_signals)
+        send_slack_message(f"🧮 리스크 통과 종목: {filtered_stocks}")
 
-        # 6️⃣ 로그 및 종료
-        send_slack_message("💾 로그 저장 완료")
-        log_info("💾 로그 저장 완료")
+        # 5️⃣ 매매 실행
+        per_stock_invest = risk_manager.portfolio_value * 0.1
+        for code in filtered_stocks:
+            df = get_daily_price(code, mode="vts", count=1)
+            if df.empty:
+                continue
+            price = df["stck_clpr"].iloc[-1]
+            qty = max(int(per_stock_invest // price), 1)
+            result = place_order(config, token, code, qty, "BUY")
+            send_slack_message(f"🟢 {code} 매수 {qty}주 — {result.get('msg1', '응답 없음')}")
+            log_info(f"{code} 매수 완료 ({qty}주)")
 
-        send_slack_message("✅ 시스템 트레이딩 프로세스 정상 종료", "🎯")
-        log_info("✅ 시스템 트레이딩 프로세스 정상 종료")
+            time.sleep(1.0)
+
+        send_slack_message("✅ 모든 거래 완료 — 트레이딩 종료")
+        log_info("✅ 모든 거래 완료 — 트레이딩 종료")
 
     except Exception as e:
         send_slack_message(f"❌ 오류 발생: {str(e)}", "🚨")
