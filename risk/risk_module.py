@@ -1,16 +1,16 @@
 import numpy as np
 import pandas as pd
+import requests, json
 from utils.logger import log_info, log_warning
-from utils.config import get_access_token, load_env
-import requests
 
 
 class RiskManager:
     """
     리스크 관리 모듈 (실제 계좌 잔고 기반)
-    - 최대 종목 비중 제한
-    - 손절 / 익절 한도 설정
-    - 포트폴리오 지표 계산 (MDD, Sharpe, 변동성)
+    - 계좌 평가금액 자동 조회
+    - 종목당 최대 비중 제한
+    - 손절/익절 기준 적용
+    - 포트폴리오 지표 계산 (MDD, Sharpe, Volatility)
     """
 
     def __init__(self,
@@ -24,20 +24,24 @@ class RiskManager:
         self.max_weight = max_weight_per_stock
         self.stop_loss = stop_loss
         self.take_profit = take_profit
-        self.portfolio_value = self.get_portfolio_value()  # 🔹 실제 계좌 평가금액 기반
+        self.portfolio_value = self.get_portfolio_value()  # 🔹 실제 계좌 잔고 반영
 
     # ==============================
     # 1️⃣ 계좌 평가금액 조회
     # ==============================
     def get_portfolio_value(self):
-        """계좌 평가금액 조회"""
+        """계좌의 총 평가금액(현금+주식 매입금액)을 조회"""
         url = f"{self.config['BASE_URL']}/uapi/domestic-stock/v1/trading/inquire-balance"
+        is_mock = "vts" in self.config["BASE_URL"].lower()  # 모의투자 여부 판단
+        tr_id = "VTTC8434R" if is_mock else "TTTC8434R"
+
         headers = {
             "authorization": f"Bearer {self.token}",
             "appkey": self.config["APP_KEY"],
             "appsecret": self.config["APP_SECRET"],
-            "tr_id": "VTTC8434R" if "vts" in self.config["BASE_URL"] else "TTTC8434R",
+            "tr_id": tr_id,
         }
+
         params = {
             "CANO": self.config["CANO"],
             "ACNT_PRDT_CD": self.config["ACNT_PRDT_CD"],
@@ -52,27 +56,37 @@ class RiskManager:
             "CTX_AREA_NK100": "",
         }
 
-        res = requests.get(url, headers=headers, params=params).json()
-        total_eval_amt = 0
         try:
-            output2 = res.get("output2", [])
-            for item in output2:
-                total_eval_amt += float(item.get("pchs_amt", 0))
-            output1 = res.get("output1", [])
-            if output1:
-                total_eval_amt += float(output1[0].get("dnca_tot_amt", 0))
-        except Exception:
-            log_warning("⚠️ 계좌 평가금액 조회 실패 — 기본값 10,000,000원 사용")
-            total_eval_amt = 10_000_000
+            res = requests.get(url, headers=headers, params=params, timeout=10)
+            data = res.json()
 
-        log_info(f"💰 계좌 평가금액: {total_eval_amt:,.0f}원")
-        return total_eval_amt
+            # 🔍 디버깅 시 실제 응답 확인 (필요 시 주석 해제)
+            # print("DEBUG:", json.dumps(data, indent=2, ensure_ascii=False))
+
+            output1 = data.get("output1", [])
+            output2 = data.get("output2", [])
+
+            cash = float(output1[0].get("dnca_tot_amt", 0)) if output1 else 0
+            stocks = sum(float(x.get("pchs_amt", 0)) for x in output2)
+
+            total_eval_amt = cash + stocks
+
+            if total_eval_amt == 0:
+                log_warning("⚠️ 평가금액이 0원으로 반환됨 — .env 계좌번호 또는 API키 확인 필요")
+                total_eval_amt = 10_000_000  # 기본값 대체
+
+            log_info(f"💰 계좌 평가금액: {total_eval_amt:,.0f}원")
+            return total_eval_amt
+
+        except Exception as e:
+            log_warning(f"⚠️ 계좌 평가금액 조회 실패: {e} — 기본값 10,000,000원 사용")
+            return 10_000_000
 
     # ==============================
     # 2️⃣ 포트폴리오 리스크 계산
     # ==============================
     def calculate_metrics(self, price_df):
-        """포트폴리오 리스크 지표 계산"""
+        """포트폴리오 리스크 지표 계산 (MDD, Volatility, Sharpe)"""
         if price_df.empty:
             log_warning("⚠️ 가격 데이터가 비어 있습니다. 리스크 계산 불가.")
             return None
@@ -95,20 +109,22 @@ class RiskManager:
         return metrics
 
     # ==============================
-    # 3️⃣ 종목별 리스크 필터
+    # 3️⃣ 종목별 리스크 필터 적용
     # ==============================
     def apply_risk_filter(self, df_signals):
-        """전략 결과에 리스크 조건 적용"""
+        """모멘텀 전략 결과에 리스크 기준 적용"""
         if df_signals.empty:
             log_warning("⚠️ 전략 결과가 비어 있어 리스크 필터를 적용할 수 없습니다.")
             return []
 
         filtered_stocks = []
+
         for _, row in df_signals.iterrows():
             code = row["code"]
             signal = row["signal"]
             momentum = row["momentum_score"]
 
+            # 손절/익절 기준
             if momentum <= self.stop_loss:
                 log_warning(f"{code}: 손절 기준 초과 ({momentum:.2%}) → 제외")
                 continue
