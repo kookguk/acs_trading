@@ -59,9 +59,7 @@ class RiskManager:
         try:
             res = requests.get(url, headers=headers, params=params, timeout=10)
             data = res.json()
-
-            # 🔍 디버깅 시 실제 응답 확인 (필요 시 주석 해제)
-            # print("DEBUG:", json.dumps(data, indent=2, ensure_ascii=False))
+            print("DEBUG:", json.dumps(data, indent=2, ensure_ascii=False))
 
             output1 = data.get("output1", [])
             output2 = data.get("output2", [])
