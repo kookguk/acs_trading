@@ -111,3 +111,24 @@ def get_stock_name(code):
     if not row.empty:
         return row["name"].values[0]
     return code
+
+# ==============================
+# 5. 현재가 조회 함수
+# ==============================
+def get_current_price(config, token, code):
+    """
+    실시간 주가 조회
+    """
+    headers = {
+        "authorization": f"Bearer {token}",
+        "appkey": config["APP_KEY"],
+        "appsecret": config["APP_SECRET"],
+        "tr_id": "FHKST01010100",  # 실시간 시세조회
+    }
+
+    url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/quotations/inquire-price"
+    params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
+
+    response = requests.get(url, headers=headers, params=params)
+    data = response.json()
+    return float(data["output"]["stck_prpr"]) if "output" in data else None
