@@ -36,7 +36,7 @@ def main():
                 f"- ⚙️ Sharpe: {performance['sharpe']:.2f}"
             )
 
-        send_slack_message("🎯 ✅ **주간 백테스트 및 종목 업데이트 완료**")
+        send_slack_message("🎯 ✅ 주간 백테스트 및 종목 업데이트 완료")
 
     except Exception as e:
         send_slack_message(f"❌ 오류 발생: {str(e)}", "🚨")
