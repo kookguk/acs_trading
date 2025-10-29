@@ -10,6 +10,7 @@ class RiskManager:
     """
     리스크 관리 모듈 (실전/모의 자동매매용)
     - 계좌 평가금액 조회
+    - 예수금 조회
     - 종목당 투자 비중 계산
     - 손절/익절 필터링
     - 포트폴리오 리스크 지표 계산
@@ -30,14 +31,16 @@ class RiskManager:
         self.max_weight = max_weight_per_stock
         self.stop_loss = stop_loss
         self.take_profit = take_profit
-        self.portfolio_value = self.get_portfolio_value()  # 🔹 계좌 평가금액 불러오기
+
+        # 🔹 평가금액 + 예수금 조회
+        self.portfolio_value, self.cash_balance = self.get_portfolio_value()
 
     # ============================================================
-    # 1️⃣ 계좌 평가금액 조회
+    # 1️⃣ 계좌 평가금액 + 예수금 조회
     # ============================================================
     def get_portfolio_value(self):
         """
-        🔹 모의투자/실전 계좌의 총 평가금액 조회
+        🔹 모의투자/실전 계좌의 총 평가금액 및 예수금 조회
         """
         headers = {
             "content-type": "application/json; charset=utf-8",
@@ -69,23 +72,25 @@ class RiskManager:
             log_info("DEBUG: 🔍 계좌 조회 결과 ↓")
             log_info(json.dumps(data, indent=2, ensure_ascii=False))
 
-            total_value = 0
+            total_value, cash_balance = 0, 0
             if "output2" in data and len(data["output2"]) > 0:
                 total_value = float(data["output2"][0].get("tot_evlu_amt", 0))
+                cash_balance = float(data["output2"][0].get("dnca_tot_amt", 0))
 
             if total_value == 0:
                 log_warning("⚠️ 평가금액이 0원으로 반환됨 — .env 계좌번호 또는 API키 확인 필요")
                 send_slack_message("⚠️ 평가금액이 0원으로 반환됨 — .env 설정 확인 필요")
             else:
-                log_info(f"💰 계좌 평가금액: {total_value:,.0f}원")
-                send_slack_message(f"💰 계좌 평가금액: {total_value:,.0f}원")
+                msg = f"💰 계좌 평가금액: {total_value:,.0f}원 / 예수금: {cash_balance:,.0f}원"
+                log_info(msg)
+                send_slack_message(msg)
 
-            return total_value
+            return total_value, cash_balance
 
         except Exception as e:
             log_error(f"❌ 평가금액 조회 실패: {e}")
             send_slack_message(f"❌ 평가금액 조회 실패: {e}")
-            return 0.0
+            return 0.0, 0.0
 
     # ============================================================
     # 2️⃣ 리스크 지표 계산 (MDD, Vol, Sharpe)
