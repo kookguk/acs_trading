@@ -176,7 +176,6 @@ class PortfolioUpdater:
         volatility = np.std(portfolio_values)
         sharpe = avg_return / volatility if volatility > 0 else 0
 
-        log_info(f"📊 백테스트 결과 → 수익률={avg_return:.2%}, 변동성={volatility:.2%}, Sharpe={sharpe:.2f}")
         return {"return": avg_return, "volatility": volatility, "sharpe": sharpe}
 
     # ================================================
@@ -197,16 +196,28 @@ class PortfolioUpdater:
             updated_list = self.update_portfolio()
             result = self.run_backtest(updated_list)
 
-            if result:
-                final_metrics = result
+            if not result:
+                log_warning(f"⚠️ {i+1}번째 시도: 백테스트 데이터 없음 → 다음 후보 교체")
+                continue
 
-            if result and result["sharpe"] > 0.5 and result["return"] > 0.01:
-                log_info("✅ 백테스트 통과 → 포트폴리오 확정")
+            final_metrics = result
+
+            # ✅ 조건 통과 시에만 로그 출력
+            if result["sharpe"] > 0.5 and result["return"] > 0.01:
+                log_info(
+                    f"✅ 백테스트 통과 (시도 {i+1}) → 최종 포트폴리오 확정\n"
+                    f"📊 최종 결과 → 수익률={result['return']*100:.2f}%, "
+                    f"변동성={result['volatility']*100:.2f}%, "
+                    f"Sharpe={result['sharpe']:.2f}"
+                )
                 self._save_current_stocks(updated_list)
                 final_stocks = updated_list
                 break
             else:
-                log_warning("❌ 백테스트 미달 → 후보 교체 후 재시도")
+                log_warning(
+                    f"❌ 백테스트 미달 (시도 {i+1}) → Sharpe={result['sharpe']:.2f}, "
+                    f"Return={result['return']*100:.2f}% → 후보 교체 재시도"
+                )
                 time.sleep(3)
         else:
             log_warning("⚠️ 3회 시도 후에도 백테스트 통과 실패 → 마지막 포트폴리오 유지")
