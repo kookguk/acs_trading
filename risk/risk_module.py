@@ -9,8 +9,7 @@ from utils.slack_notifier import send_slack_message
 class RiskManager:
     """
     리스크 관리 모듈 (실전/모의 자동매매용)
-    - 계좌 평가금액 조회
-    - 예수금 조회
+    - 계좌 평가금액 및 예수금 조회
     - 종목당 투자 비중 계산
     - 손절/익절 필터링
     - 포트폴리오 리스크 지표 계산
@@ -69,8 +68,6 @@ class RiskManager:
         try:
             res = requests.get(url, headers=headers, params=params, timeout=10)
             data = res.json()
-            log_info("DEBUG: 🔍 계좌 조회 결과 ↓")
-            log_info(json.dumps(data, indent=2, ensure_ascii=False))
 
             total_value, cash_balance = 0, 0
             if "output2" in data and len(data["output2"]) > 0:
