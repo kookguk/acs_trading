@@ -7,6 +7,7 @@ from datetime import datetime
 from utils.data_handler import get_daily_price
 from utils.logger import log_info, log_warning
 
+
 class PortfolioUpdater:
     """
     📆 종목 업데이트 + 백테스트 자동 수행 모듈
@@ -85,7 +86,7 @@ class PortfolioUpdater:
         return df_returns
 
     # ================================================
-    # 3️⃣ 교체 로직 (중복 방지 개선 버전)
+    # 3️⃣ 교체 로직
     # ================================================
     def update_portfolio(self):
         """기준 이하 종목 교체"""
@@ -179,19 +180,30 @@ class PortfolioUpdater:
         return {"return": avg_return, "volatility": volatility, "sharpe": sharpe}
 
     # ================================================
-    # 5️⃣ 전체 실행 루프
+    # 5️⃣ 전체 실행 루프 (성과값 함께 반환)
     # ================================================
-    def run(self):
+    def run(self, return_metrics=False):
+        """
+        전체 실행 루프
+        - 교체 → 백테스트 → 통과 여부 판단
+        - return_metrics=True → (최종 종목 리스트, 백테스트 성과) 반환
+        """
         log_info("🚀 종목 업데이트 + 백테스트 루프 시작")
         max_iterations = 3
+        final_metrics = None
+        final_stocks = self.current_stocks
 
         for i in range(max_iterations):
             updated_list = self.update_portfolio()
             result = self.run_backtest(updated_list)
 
+            if result:
+                final_metrics = result
+
             if result and result["sharpe"] > 0.5 and result["return"] > 0.01:
                 log_info("✅ 백테스트 통과 → 포트폴리오 확정")
                 self._save_current_stocks(updated_list)
+                final_stocks = updated_list
                 break
             else:
                 log_warning("❌ 백테스트 미달 → 후보 교체 후 재시도")
@@ -200,4 +212,8 @@ class PortfolioUpdater:
             log_warning("⚠️ 3회 시도 후에도 백테스트 통과 실패 → 마지막 포트폴리오 유지")
 
         log_info("✅ 주간 포트폴리오 업데이트 완료")
-        return self._load_current_stocks()  # ✅ 여기가 핵심
+
+        if return_metrics:
+            return self._load_current_stocks(), final_metrics
+        else:
+            return self._load_current_stocks()
