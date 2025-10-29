@@ -34,8 +34,37 @@ class RiskManager:
         # 🔹 평가금액 + 예수금 조회
         self.portfolio_value, self.cash_balance = self.get_portfolio_value()
 
+        # ✅ 현재 수익률 계산
+        self.initial_value = self.get_initial_value()
+        if self.initial_value > 0:
+            self.current_return = (self.portfolio_value - self.initial_value) / self.initial_value
+        else:
+            self.current_return = 0.0
+
     # ============================================================
-    # 1️⃣ 계좌 평가금액 + 예수금 조회
+    # 1️⃣ 초기 평가금(기준값) 조회 — 캐시 or DB 기반
+    # ============================================================
+    def get_initial_value(self):
+        """
+        첫 실행 시점의 초기 평가금액 기준을 설정 (token_cache.json 또는 별도 파일로 저장 가능)
+        """
+        try:
+            import os, json
+            if os.path.exists("initial_value.json"):
+                with open("initial_value.json", "r") as f:
+                    data = json.load(f)
+                return data.get("initial_value", 0)
+            else:
+                # 초기 실행 시 현재 평가금액을 기준으로 저장
+                with open("initial_value.json", "w") as f:
+                    json.dump({"initial_value": self.portfolio_value}, f, indent=2, ensure_ascii=False)
+                return self.portfolio_value
+        except Exception as e:
+            log_warning(f"⚠️ 초기 평가금 조회 실패: {e}")
+            return self.portfolio_value
+
+    # ============================================================
+    # 2️⃣ 계좌 평가금액 + 예수금 조회
     # ============================================================
     def get_portfolio_value(self):
         """
@@ -43,7 +72,7 @@ class RiskManager:
         """
         headers = {
             "content-type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {self.config['ACCESS_TOKEN']}",
+            "authorization": f"Bearer {self.config.get('ACCESS_TOKEN', '')}",
             "appkey": self.config["APP_KEY"],
             "appsecret": self.config["APP_SECRET"],
             "tr_id": "VTTC8434R" if "vts" in self.config["BASE_URL"] else "TTTC8434R",
@@ -90,7 +119,7 @@ class RiskManager:
             return 0.0, 0.0
 
     # ============================================================
-    # 2️⃣ 리스크 지표 계산 (MDD, Vol, Sharpe)
+    # 3️⃣ 리스크 지표 계산 (MDD, Vol, Sharpe)
     # ============================================================
     def calculate_metrics(self, price_df: pd.DataFrame):
         if price_df.empty:
@@ -116,7 +145,7 @@ class RiskManager:
         return metrics
 
     # ============================================================
-    # 3️⃣ 리스크 필터 적용 (손절/익절/비중)
+    # 4️⃣ 리스크 필터 적용 (손절/익절/비중)
     # ============================================================
     def apply_risk_filter(self, df_signals):
         """
