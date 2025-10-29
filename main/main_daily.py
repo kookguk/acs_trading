@@ -65,9 +65,9 @@ def main():
         # ===========================
         # 🔹 Slack 알림
         # ===========================
-        send_slack_message(f"📊 유지 종목: {[f'{s} ({get_stock_name(s)})' for s in filtered_stocks]}")
-        send_slack_message(f"📈 신규 추가 종목: {[f'{s} ({get_stock_name(s)})' for s in new_additions]}")
+        send_slack_message(f"📊 매수 종목: {[f'{s} ({get_stock_name(s)})' for s in filtered_stocks]}")
         send_slack_message(f"📉 매도 종목: {[f'{s} ({get_stock_name(s)})' for s in sell_stocks]}")
+        send_slack_message(f"📈 신규 추가 종목: {[f'{s} ({get_stock_name(s)})' for s in new_additions]}")
 
         # 🔹 새로운 보유 종목 리스트 알림
         new_holdings_named = [f"{s} ({get_stock_name(s)})" for s in keep_stocks]
