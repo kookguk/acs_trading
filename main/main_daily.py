@@ -39,6 +39,10 @@ def main():
         # 1️⃣ 환경 설정 및 토큰 발급
         config = load_env(mode="vts")
         token = get_access_token(config)
+
+        # ✅ 수정 부분: 토큰을 config에 추가
+        config["ACCESS_TOKEN"] = token
+
         send_slack_message("✅ **Access Token 발급 완료**")
 
         # 2️⃣ 계좌 정보 및 현재 잔고
