@@ -189,7 +189,6 @@ class PortfolioUpdater:
             updated_list = self.update_portfolio()
             result = self.run_backtest(updated_list)
 
-            # 기준: Sharpe > 0.5 & 평균 수익률 > 1%
             if result and result["sharpe"] > 0.5 and result["return"] > 0.01:
                 log_info("✅ 백테스트 통과 → 포트폴리오 확정")
                 self._save_current_stocks(updated_list)
@@ -201,3 +200,4 @@ class PortfolioUpdater:
             log_warning("⚠️ 3회 시도 후에도 백테스트 통과 실패 → 마지막 포트폴리오 유지")
 
         log_info("✅ 주간 포트폴리오 업데이트 완료")
+        return self._load_current_stocks()  # ✅ 여기가 핵심
