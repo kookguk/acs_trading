@@ -179,3 +179,24 @@ class RiskManager:
         send_slack_message(f"🧮 리스크 통과 종목: {filtered_stocks}")
 
         return filtered_stocks
+    
+    # ============================================================
+    # 5️⃣ 포트폴리오 갱신 (주문 후 평가금액/수익률 업데이트)
+    # ============================================================
+    def refresh_portfolio(self):
+        """
+        주문 후 계좌 평가금, 예수금, 수익률을 다시 계산
+        """
+        new_value, new_cash = self.get_portfolio_value()
+        self.portfolio_value = new_value
+        self.cash_balance = new_cash
+
+        if self.initial_value > 0:
+            self.current_return = (self.portfolio_value - self.initial_value) / self.initial_value
+        else:
+            self.current_return = 0.0
+
+        log_info(f"🔄 포트폴리오 갱신 완료 → 평가금 {self.portfolio_value:,.0f}원, 수익률 {self.current_return:.2%}")
+        send_slack_message(
+            f"🔄 포트폴리오 갱신 완료\n💰 평가금: {self.portfolio_value:,.0f}원\n📈 수익률: {self.current_return:.2%}"
+        )
