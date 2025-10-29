@@ -109,7 +109,6 @@ class RiskManager:
             else:
                 msg = f"💰 계좌 평가금액: {total_value:,.0f}원 / 예수금: {cash_balance:,.0f}원"
                 log_info(msg)
-                send_slack_message(msg)
 
             return total_value, cash_balance
 
@@ -176,7 +175,6 @@ class RiskManager:
             filtered_stocks.append(code)
 
         log_info(f"✅ 리스크 통과 종목: {filtered_stocks}")
-        send_slack_message(f"🧮 리스크 통과 종목: {filtered_stocks}")
 
         return filtered_stocks
     
@@ -197,6 +195,3 @@ class RiskManager:
             self.current_return = 0.0
 
         log_info(f"🔄 포트폴리오 갱신 완료 → 평가금 {self.portfolio_value:,.0f}원, 수익률 {self.current_return:.2%}")
-        send_slack_message(
-            f"🔄 포트폴리오 갱신 완료\n💰 평가금: {self.portfolio_value:,.0f}원\n📈 수익률: {self.current_return:.2%}"
-        )
