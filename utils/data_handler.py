@@ -94,3 +94,19 @@ def get_balance(mode="vts"):
     df = pd.DataFrame(balance)
     log_info(f"현재 잔고 종목 수: {len(df)}개")
     return df
+
+# ==============================
+# 4. 종목코드-종목명 매핑 함수
+# ==============================
+def get_stock_name(code):
+    """
+    KOSPI200 후보 CSV에서 종목명 조회
+    """
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    candidates_path = os.path.join(base_dir, "utils", "stocks", "candidates_kospi200.csv")
+    
+    df = pd.read_csv(candidates_path, dtype={"code": str})
+    row = df[df["code"] == code]
+    if not row.empty:
+        return row["name"].values[0]
+    return code
