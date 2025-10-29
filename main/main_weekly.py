@@ -31,8 +31,8 @@ def main():
         if performance:
             send_slack_message(
                 f"📊 백테스트 결과 요약:\n"
-                f"- 📈 수익률: {performance['return']:.2f}%\n"
-                f"- 📉 변동성: {performance['volatility']:.2f}%\n"
+                f"- 📈 수익률: {performance['return']*100:.2f}%\n"
+                f"- 📉 변동성: {performance['volatility']*100:.2f}%\n"
                 f"- ⚙️ Sharpe: {performance['sharpe']:.2f}"
             )
 
