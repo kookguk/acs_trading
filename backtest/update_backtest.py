@@ -86,10 +86,10 @@ class PortfolioUpdater:
         return df_returns
 
     # ================================================
-    # 3️⃣ 교체 로직
+    # 3️⃣ 교체 로직 (오프셋 기반 반복 교체)
     # ================================================
-    def update_portfolio(self):
-        """기준 이하 종목 교체"""
+    def update_portfolio(self, offset=0):
+        """기준 이하 종목 교체 (offset에 따라 후보 순위 다르게 선택)"""
         df_returns = self.evaluate_current_stocks()
         losers = df_returns[df_returns["weekly_return"] <= self.replace_threshold]
         num_replace = len(losers)
@@ -105,7 +105,7 @@ class PortfolioUpdater:
 
         log_info(f"📈 후보 종목 수익률 계산 중... (보유 중 종목 제외 후 {len(candidate_pool)}개)")
         candidate_scores = []
-        for code in candidate_pool["code"].head(100):  # 상위 100개만 평가
+        for code in candidate_pool["code"].head(100):
             try:
                 ret = self._weekly_return(code)
                 if ret is not None:
@@ -120,9 +120,13 @@ class PortfolioUpdater:
             log_warning("⚠️ 후보 종목 수익률 계산 결과가 비어 있습니다. 교체 생략.")
             return self.current_stocks
 
-        # ✅ 상위 n개 후보 선택 (교체할 개수만큼)
+        # ✅ 상위 후보 중 offset을 고려하여 다음 그룹 선택
         df_candidate = df_candidate.sort_values("weekly_return", ascending=False)
-        new_candidates = df_candidate["code"].head(num_replace).tolist()
+        start_idx = offset * num_replace
+        end_idx = start_idx + num_replace
+        new_candidates = df_candidate["code"].iloc[start_idx:end_idx].tolist()
+
+        log_info(f"🔁 {offset+1}번째 시도용 교체 후보: {new_candidates}")
 
         # ✅ 손실 종목 제거 후 신규 후보 교체
         updated_stocks = [code for code in self.current_stocks if code not in losers["code"].tolist()]
@@ -131,7 +135,6 @@ class PortfolioUpdater:
         # ✅ 정확히 10개 유지 (중복 제거 + 부족 시 보충)
         updated_stocks = list(dict.fromkeys(updated_stocks))
         if len(updated_stocks) < 10:
-            extra_needed = 10 - len(updated_stocks)
             for code in df_candidate["code"]:
                 if code not in updated_stocks:
                     updated_stocks.append(code)
@@ -139,8 +142,6 @@ class PortfolioUpdater:
                         break
 
         updated_stocks = updated_stocks[:10]
-
-        log_info(f"🔄 교체 완료 → {num_replace}개 종목 교체됨")
         log_info(f"📁 새로운 종목 리스트 (총 {len(updated_stocks)}개): {updated_stocks}")
 
         self._save_current_stocks(updated_stocks)
@@ -150,10 +151,7 @@ class PortfolioUpdater:
     # 4️⃣ 백테스트 로직 (단순 Buy & Hold)
     # ================================================
     def run_backtest(self, stock_list):
-        """
-        단순 Buy & Hold 백테스트
-        - lookback_weeks 기간 동안의 수익률, 변동성, Sharpe 계산
-        """
+        """단순 Buy & Hold 백테스트"""
         log_info("🧮 백테스트 시작")
         portfolio_values = []
 
@@ -179,21 +177,17 @@ class PortfolioUpdater:
         return {"return": avg_return, "volatility": volatility, "sharpe": sharpe}
 
     # ================================================
-    # 5️⃣ 전체 실행 루프 (성과값 함께 반환)
+    # 5️⃣ 전체 실행 루프 (오프셋 증가 반복)
     # ================================================
     def run(self, return_metrics=False):
-        """
-        전체 실행 루프
-        - 교체 → 백테스트 → 통과 여부 판단
-        - return_metrics=True → (최종 종목 리스트, 백테스트 성과) 반환
-        """
+        """전체 실행 루프 — 백테스트 기준 통과 시까지 후보 교체 반복"""
         log_info("🚀 종목 업데이트 + 백테스트 루프 시작")
         max_iterations = 3
         final_metrics = None
         final_stocks = self.current_stocks
 
         for i in range(max_iterations):
-            updated_list = self.update_portfolio()
+            updated_list = self.update_portfolio(offset=i)
             result = self.run_backtest(updated_list)
 
             if not result:
@@ -201,22 +195,19 @@ class PortfolioUpdater:
                 continue
 
             final_metrics = result
+            sharpe, ret = result["sharpe"], result["return"]
 
-            # ✅ 조건 통과 시에만 로그 출력
-            if result["sharpe"] > 1.0 and result["return"] > 0.01:
+            if sharpe > 1.0 and ret > 0.01:
                 log_info(
                     f"✅ 백테스트 통과 (시도 {i+1}) → 최종 포트폴리오 확정\n"
-                    f"📊 최종 결과 → 수익률={result['return']*100:.2f}%, "
-                    f"변동성={result['volatility']*100:.2f}%, "
-                    f"Sharpe={result['sharpe']:.2f}"
+                    f"📊 최종 결과 → 수익률={ret*100:.2f}%, 변동성={result['volatility']*100:.2f}%, Sharpe={sharpe:.2f}"
                 )
                 self._save_current_stocks(updated_list)
                 final_stocks = updated_list
                 break
             else:
                 log_warning(
-                    f"❌ 백테스트 미달 (시도 {i+1}) → Sharpe={result['sharpe']:.2f}, "
-                    f"Return={result['return']*100:.2f}% → 후보 교체 재시도"
+                    f"❌ 백테스트 미달 (시도 {i+1}) → Sharpe={sharpe:.2f}, Return={ret*100:.2f}% → 다음 후보로 교체 재시도"
                 )
                 time.sleep(3)
         else:
