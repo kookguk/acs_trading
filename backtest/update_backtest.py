@@ -196,7 +196,7 @@ class PortfolioUpdater:
             if sharpe > 1.0 and ret > 0.01:
                 log_info(
                     f"✅ 백테스트 통과 (시도 {i+1}) → 포트폴리오 확정\n"
-                    f"📊 최종 결과 → 수익률={ret*100:.2f}%, 변동성={result['volatility']*100:.2f}%, Sharpe={sharpe:.2f}"
+                    f"📊 최종 결과 : 수익률={ret*100:.2f}%, 변동성={result['volatility']*100:.2f}%, Sharpe={sharpe:.2f}"
                 )
                 self._save_current_stocks(updated_list)
                 final_stocks = updated_list
