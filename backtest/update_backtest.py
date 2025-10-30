@@ -203,7 +203,7 @@ class PortfolioUpdater:
             final_metrics = result
 
             # ✅ 조건 통과 시에만 로그 출력
-            if result["sharpe"] > 0.5 and result["return"] > 0.01:
+            if result["sharpe"] > 1.0 and result["return"] > 0.01:
                 log_info(
                     f"✅ 백테스트 통과 (시도 {i+1}) → 최종 포트폴리오 확정\n"
                     f"📊 최종 결과 → 수익률={result['return']*100:.2f}%, "
