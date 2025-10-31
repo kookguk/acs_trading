@@ -11,21 +11,14 @@ from utils.logger import log_info, log_warning
 class PortfolioUpdater:
     """
     📆 종목 업데이트 + 백테스트 자동 수행 모듈
-    1️⃣ 주간 수익률 기반 교체
-    2️⃣ 백테스트로 검증 후 반영
+    - 주간 수익률 기반 교체
+    - 교체 종목 수에 따라 백테스트 시도 횟수 조정
     """
 
-    def __init__(self, lookback_weeks=12, replace_threshold=-0.02, top_n=3, mode="vts"):
-        """
-        :param lookback_weeks: 백테스트 기간 (기본 12주)
-        :param replace_threshold: 주간 수익률 기준 (이하 종목 교체)
-        :param top_n: 교체 시 후보 중 상위 N개 선택
-        :param mode: 모의투자(vts) or 실전(real)
-        """
+    def __init__(self, lookback_weeks=12, replace_threshold=-0.02, mode="vts"):
         self.mode = mode
         self.lookback_weeks = lookback_weeks
         self.replace_threshold = replace_threshold
-        self.top_n = top_n
 
         base_dir = os.path.dirname(os.path.dirname(__file__))
         self.current_path = os.path.join(base_dir, "utils", "stocks", "current_stocks.json")
@@ -60,7 +53,7 @@ class PortfolioUpdater:
     def _weekly_return(self, code):
         """최근 1주일 수익률 계산"""
         df = get_daily_price(code, self.mode, count=10)
-        time.sleep(0.6)
+        time.sleep(0.5)
         if df.empty or len(df) < 5:
             return None
         start_price = df["stck_clpr"].iloc[-5]
@@ -96,7 +89,7 @@ class PortfolioUpdater:
         # 모든 종목이 기준 이상일 경우 유지
         if num_replace == 0:
             log_info("✅ 교체 불필요 (모든 종목 유지)")
-            return self.current_stocks
+            return self.current_stocks, 0
 
         # ================================
         # 후보군에서 보유 종목 제외 후 평가
@@ -111,14 +104,14 @@ class PortfolioUpdater:
                 ret = self._weekly_return(code)
                 if ret is not None:
                     candidate_scores.append({"code": code, "weekly_return": ret})
-                time.sleep(0.6)
+                time.sleep(0.3)
             except Exception as e:
                 log_warning(f"{code}: 후보 평가 중 오류 발생 → {e}")
 
         df_candidate = pd.DataFrame(candidate_scores)
         if df_candidate.empty:
             log_warning("⚠️ 후보 종목 수익률 계산 결과가 비어 있음 — 교체 생략")
-            return self.current_stocks
+            return self.current_stocks, num_replace
 
         # ================================
         # 상위 후보 정렬 및 offset 기반 선택
@@ -132,18 +125,14 @@ class PortfolioUpdater:
         log_info(f"🔁 {offset+1}번째 시도 신규 후보: {new_candidates}")
 
         # ================================
-        # 교체 실행 (중복 방지 포함)
+        # 교체 실행 (중복 방지)
         # ================================
         updated_stocks = [c for c in self.current_stocks if c not in losers["code"].tolist()]
         updated_stocks.extend(new_candidates)
-
-        # ✅ 중복 제거 및 10개 유지
-        updated_stocks = list(dict.fromkeys(updated_stocks))
-        updated_stocks = updated_stocks[:10]
+        updated_stocks = list(dict.fromkeys(updated_stocks))[:10]
 
         log_info(f"📁 새로운 종목 리스트 (총 {len(updated_stocks)}개): {updated_stocks}")
-        self._save_current_stocks(updated_stocks)
-        return updated_stocks
+        return updated_stocks, num_replace
 
     # =====================================================
     # 4️⃣ 백테스트 로직 (단순 Buy & Hold)
@@ -155,7 +144,7 @@ class PortfolioUpdater:
 
         for code in stock_list:
             df = get_daily_price(code, self.mode, count=self.lookback_weeks * 5)
-            time.sleep(0.6)
+            time.sleep(0.5)
             if df.empty or len(df) < 5:
                 continue
 
@@ -171,35 +160,54 @@ class PortfolioUpdater:
         avg_return = np.mean(portfolio_values)
         volatility = np.std(portfolio_values)
         sharpe = avg_return / volatility if volatility > 0 else 0
-
         return {"return": avg_return, "volatility": volatility, "sharpe": sharpe}
 
     # =====================================================
-    # 5️⃣ 전체 실행 루프 (3회까지 재시도)
+    # 5️⃣ 전체 실행 루프 (교체 종목 수에 따른 반복 횟수)
     # =====================================================
     def run(self, return_metrics=False):
         """전체 실행 루프 — 백테스트 기준 통과 시까지 반복"""
         log_info("🚀 종목 업데이트 + 백테스트 루프 시작")
-        max_iterations = 3
-        final_metrics, final_stocks = None, self.current_stocks
+
+        # 첫 번째 교체 실행 (교체 종목 수 파악)
+        updated_list, num_replace = self.update_portfolio(offset=0)
+
+        # 교체 수에 따른 시도 횟수 결정
+        if num_replace <= 3:
+            max_iterations = 3
+        elif num_replace <= 5:
+            max_iterations = 2
+        else:
+            max_iterations = 1
+
+        log_info(f"🧩 교체 종목 {num_replace}개 → 최대 {max_iterations}회 백테스트 시도 예정")
+
+        best_metrics = None
+        best_stocks = updated_list
+        best_sharpe = -np.inf
 
         for i in range(max_iterations):
-            updated_list = self.update_portfolio(offset=i)
-            result = self.run_backtest(updated_list)
+            # offset에 따라 새로운 후보 세트 사용
+            trial_stocks, _ = self.update_portfolio(offset=i)
+            result = self.run_backtest(trial_stocks)
+
             if not result:
                 log_warning(f"⚠️ {i+1}번째 시도: 백테스트 데이터 없음 → 다음 후보로 이동")
                 continue
 
-            final_metrics = result
             sharpe, ret = result["sharpe"], result["return"]
+
+            if sharpe > best_sharpe:
+                best_sharpe = sharpe
+                best_metrics = result
+                best_stocks = trial_stocks
 
             if sharpe > 1.0 and ret > 0.01:
                 log_info(
                     f"✅ 백테스트 통과 (시도 {i+1}) → 포트폴리오 확정\n"
-                    f"📊 최종 결과 : 수익률={ret*100:.2f}%, 변동성={result['volatility']*100:.2f}%, Sharpe={sharpe:.2f}"
+                    f"📊 결과: 수익률={ret*100:.2f}%, 변동성={result['volatility']*100:.2f}%, Sharpe={sharpe:.2f}"
                 )
-                self._save_current_stocks(updated_list)
-                final_stocks = updated_list
+                self._save_current_stocks(trial_stocks)
                 break
             else:
                 log_warning(
@@ -207,11 +215,12 @@ class PortfolioUpdater:
                 )
                 time.sleep(3)
         else:
-            log_warning("⚠️ 3회 시도 후에도 백테스트 통과 실패 → 마지막 포트폴리오 유지")
+            log_warning("⚠️ 모든 시도 실패 → Sharpe 최고 조합으로 확정")
+            self._save_current_stocks(best_stocks)
 
         log_info("✅ 주간 포트폴리오 업데이트 완료")
 
         if return_metrics:
-            return self._load_current_stocks(), final_metrics
+            return self._load_current_stocks(), best_metrics
         else:
             return self._load_current_stocks()
