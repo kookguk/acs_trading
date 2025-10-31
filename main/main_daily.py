@@ -28,6 +28,7 @@ def get_current_price(config, token, code):
         return price
     except Exception as e:
         log_error(f"❌ 현재가 조회 실패: {code} → {e}")
+        send_slack_message(f"⚠️ 현재가 조회 실패: {code} → {e}")
         return None
 
 
@@ -40,9 +41,8 @@ def main():
         config = load_env(mode="vts")
         token = get_access_token(config)
 
-        # ✅ 수정 부분: 토큰을 config에 추가
+        # ✅ 토큰을 config에 추가
         config["ACCESS_TOKEN"] = token
-
         send_slack_message("✅ Access Token 발급 완료")
 
         # 2️⃣ 계좌 정보 및 현재 잔고
@@ -86,20 +86,53 @@ def main():
             f"- 신규 매수 종목: {[f'{s} ({get_stock_name(s)})' for s in new_additions]}"
         )
 
-        # 7️⃣ 주문 실행
+        # 7️⃣ 주문 실행 (성공/실패/사유까지 Slack 전송)
         send_slack_message("📈 슬리피지 보정 지정가 주문 실행 시작")
 
-        for s in sell_stocks:
-            price = get_current_price(config, token, s)
-            if price:
-                place_order(config, token, s, qty=1, price=price, side="SELL")
-                send_slack_message(f"📉 매도 주문: {s} ({get_stock_name(s)}), 지정가={price:,.0f}원")
+        def execute_order_list(order_list, side):
+            for s in order_list:
+                price = get_current_price(config, token, s)
+                if not price:
+                    msg = f"⚠️ {side} 주문 실패: {s} ({get_stock_name(s)}) → 현재가 조회 실패"
+                    log_error(msg)
+                    send_slack_message(msg)
+                    continue
 
-        for s in new_additions:
-            price = get_current_price(config, token, s)
-            if price:
-                place_order(config, token, s, qty=1, price=price, side="BUY")
-                send_slack_message(f"📈 매수 주문: {s} ({get_stock_name(s)}), 지정가={price:,.0f}원")
+                try:
+                    result = place_order(config, token, s, qty=1, price=price, side=side)
+
+                    # ✅ place_order()의 반환값 기반으로 처리
+                    if isinstance(result, dict):
+                        if result.get("success", False):
+                            msg = f"✅ {side} 주문 성공: {s} ({get_stock_name(s)}), 수량=1주, 주문가={price:,.0f}원"
+                            log_info(msg)
+                            send_slack_message(msg)
+                        else:
+                            reason = result.get("message", "알 수 없는 오류")
+                            msg = f"⚠️ {side} 주문 실패: {s} ({get_stock_name(s)}), 사유={reason}"
+                            log_error(msg)
+                            send_slack_message(msg)
+                    else:
+                        # place_order()가 단순 bool 반환하는 경우
+                        if result:
+                            msg = f"✅ {side} 주문 성공: {s} ({get_stock_name(s)}), 주문가={price:,.0f}원"
+                            log_info(msg)
+                            send_slack_message(msg)
+                        else:
+                            msg = f"⚠️ {side} 주문 실패: {s} ({get_stock_name(s)})"
+                            log_error(msg)
+                            send_slack_message(msg)
+
+                except Exception as e:
+                    msg = f"❌ {side} 주문 중 예외 발생: {s} ({get_stock_name(s)}) → {e}"
+                    log_error(msg)
+                    send_slack_message(msg)
+
+                time.sleep(1)  # 주문 간 간격
+
+        # 실제 주문 실행
+        execute_order_list(sell_stocks, "SELL")
+        execute_order_list(new_additions, "BUY")
 
         # 8️⃣ 주문 후 잔고 갱신
         risk_manager.refresh_portfolio()
