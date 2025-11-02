@@ -37,7 +37,7 @@ def place_order(config, token, code, qty, price, side="BUY"):
             "CANO": config["CANO"],
             "ACNT_PRDT_CD": config["ACNT_PRDT_CD"],
             "PDNO": code,
-            "ORD_DVSN": "01",  # ✅ 지정가
+            "ORD_DVSN": "03",  # ✅ 조건부 지정가
             "ORD_QTY": str(int(qty)),
             "ORD_UNPR": str(int(order_price)),
         }
