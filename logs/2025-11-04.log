@@ -112,3 +112,23 @@
 2025-11-04 19:47:38 [ERROR] ⚠️ SELL 주문 실패: 006400 (삼성SDI), 사유=HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): Max retries exceeded with url: /uapi/domestic-stock/v1/trading/order-cash (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:1131)')))
 2025-11-04 19:47:39 [ERROR] ❌ SELL 주문 실패 (500): {"rt_cd":"1","msg_cd":"EGW00201","msg1":"초당 거래건수를 초과하였습니다."}
 2025-11-04 19:47:39 [ERROR] ⚠️ SELL 주문 실패: 028260 (삼성물산), 사유=HTTP 500 오류: {"rt_cd":"1","msg_cd":"EGW00201","msg1":"초당 거래건수를 초과하였습니다."}
+2025-11-04 19:57:42 [ERROR] ❌ 현재가 조회 실패: 034730 → HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): Max retries exceeded with url: /uapi/domestic-stock/v1/quotations/inquire-price?fid_cond_mrkt_div_code=J&fid_input_iscd=034730 (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:1131)')))
+2025-11-04 19:57:42 [ERROR] ⚠️ SELL 주문 실패: 034730 (SK) → 현재가 조회 실패
+2025-11-04 19:57:42 [ERROR] ⚠️ BUY 주문 실패: 207940, 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:42 [ERROR] ⚠️ BUY 주문 실패: 207940 (삼성바이오로직스), 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:44 [ERROR] ⚠️ BUY 주문 실패: 003550, 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:44 [ERROR] ⚠️ BUY 주문 실패: 003550 (LG), 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:45 [ERROR] ⚠️ BUY 주문 실패: 010950, 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:45 [ERROR] ⚠️ BUY 주문 실패: 010950 (S-Oil), 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:47 [ERROR] ⚠️ BUY 주문 실패: 011170, 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:47 [ERROR] ⚠️ BUY 주문 실패: 011170 (롯데케미칼), 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:48 [ERROR] ⚠️ BUY 주문 실패: 032830, 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:48 [ERROR] ⚠️ BUY 주문 실패: 032830 (삼성생명), 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:50 [ERROR] ⚠️ BUY 주문 실패: 017670, 사유=모의투자 장종료 입니다.
+2025-11-04 19:57:50 [ERROR] ⚠️ BUY 주문 실패: 017670 (SK텔레콤), 사유=모의투자 장종료 입니다.
+2025-11-04 20:07:52 [ERROR] ❌ 현재가 조회 실패: 000270 → HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): Max retries exceeded with url: /uapi/domestic-stock/v1/quotations/inquire-price?fid_cond_mrkt_div_code=J&fid_input_iscd=000270 (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:1131)')))
+2025-11-04 20:07:52 [ERROR] ⚠️ BUY 주문 실패: 000270 (기아) → 현재가 조회 실패
+2025-11-04 20:07:53 [INFO] 💰 계좌 평가금액: 500,337,075원 / 예수금: 497,887,294원
+2025-11-04 20:07:53 [INFO] 🔄 포트폴리오 갱신 완료 → 평가금 500,337,075원, 수익률 0.00%
+2025-11-04 20:07:53 [INFO] 💾 current_stocks.json 업데이트 완료 (총 10개)
+2025-11-04 20:07:54 [INFO] ✅ 일일 자동매매 종료
