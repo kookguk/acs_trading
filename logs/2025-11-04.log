@@ -108,3 +108,7 @@
 2025-11-04 19:37:34 [ERROR] ⚠️ SELL 주문 실패: 051910 (LG화학), 사유=모의투자 장종료 입니다.
 2025-11-04 19:37:36 [ERROR] ⚠️ SELL 주문 실패: 005380, 사유=모의투자 장종료 입니다.
 2025-11-04 19:37:36 [ERROR] ⚠️ SELL 주문 실패: 005380 (현대차), 사유=모의투자 장종료 입니다.
+2025-11-04 19:47:38 [ERROR] ❌ SELL 주문 중 오류 발생: HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): Max retries exceeded with url: /uapi/domestic-stock/v1/trading/order-cash (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:1131)')))
+2025-11-04 19:47:38 [ERROR] ⚠️ SELL 주문 실패: 006400 (삼성SDI), 사유=HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): Max retries exceeded with url: /uapi/domestic-stock/v1/trading/order-cash (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:1131)')))
+2025-11-04 19:47:39 [ERROR] ❌ SELL 주문 실패 (500): {"rt_cd":"1","msg_cd":"EGW00201","msg1":"초당 거래건수를 초과하였습니다."}
+2025-11-04 19:47:39 [ERROR] ⚠️ SELL 주문 실패: 028260 (삼성물산), 사유=HTTP 500 오류: {"rt_cd":"1","msg_cd":"EGW00201","msg1":"초당 거래건수를 초과하였습니다."}
