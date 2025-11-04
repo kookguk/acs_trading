@@ -161,7 +161,6 @@ class RiskManager:
         for _, row in df_signals.iterrows():
             code = row["code"]
             momentum = row["momentum_score"]
-
             # 손절 / 익절 조건
             if momentum <= self.stop_loss:
                 log_warning(f"{code}: 손절 기준 초과 ({momentum:.2%}) → 제외")
