@@ -14,7 +14,7 @@ def place_order(config, token, code, qty, price, side="BUY"):
 
     try:
         # 주문 구분 ID (모의투자)
-        tr_id = "VTTC0802U" if side == "BUY" else "VTTC0801U"
+        tr_id = "VTTC0012U" if side == "BUY" else "VTTC0011U"
 
         # 호가 단위 계산 (약 0.2%)
         tick = max(int(price * 0.002), 10)
@@ -37,7 +37,7 @@ def place_order(config, token, code, qty, price, side="BUY"):
             "CANO": config["CANO"],
             "ACNT_PRDT_CD": config["ACNT_PRDT_CD"],
             "PDNO": code,
-            "ORD_DVSN": "03",  # ✅ 조건부 지정가
+            "ORD_DVSN": "00",  # 지정가
             "ORD_QTY": str(int(qty)),
             "ORD_UNPR": str(int(order_price)),
         }
