@@ -1,7 +1,7 @@
 import time
 import requests
 from utils.slack_notifier import send_slack_message
-from utils.logger import log_info, log_error
+from utils.logger import log_info, log_error, log_warning
 from utils.config import load_env, get_access_token
 from strategies.momentum_strategy import MomentumStrategy
 from risk.risk_module import RiskManager
@@ -11,7 +11,7 @@ from utils.order_handler import place_order
 
 
 def get_current_price(config, token, code):
-    """현재가 조회 함수"""
+    """현재가 조회"""
     try:
         url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/quotations/inquire-price"
         headers = {
@@ -19,17 +19,56 @@ def get_current_price(config, token, code):
             "appkey": config["APP_KEY"],
             "appsecret": config["APP_SECRET"],
             "tr_id": "FHKST01010100",
-            "content-type": "application/json"
+            "content-type": "application/json",
         }
         params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
         res = requests.get(url, headers=headers, params=params)
         data = res.json()
-        price = float(data["output"]["stck_prpr"])
-        return price
+        return float(data["output"]["stck_prpr"])
     except Exception as e:
         log_error(f"❌ 현재가 조회 실패: {code} → {e}")
         send_slack_message(f"⚠️ 현재가 조회 실패: {code} → {e}")
         return None
+
+
+def get_holding_quantity(config, token, code):
+    """현재 보유 수량 조회"""
+    try:
+        url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/trading/inquire-balance"
+        headers = {
+            "authorization": f"Bearer {token}",
+            "appkey": config["APP_KEY"],
+            "appsecret": config["APP_SECRET"],
+            "tr_id": "VTTC8434R",  # 모의투자 잔고조회 (실전은 TTTC8434R)
+            "content-type": "application/json",
+        }
+        params = {
+            "CANO": config["CANO"],
+            "ACNT_PRDT_CD": config["ACNT_PRDT_CD"],
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "N",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "00",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+
+        res = requests.get(url, headers=headers, params=params)
+        data = res.json()
+
+        if "output1" in data:
+            for item in data["output1"]:
+                if item["pdno"] == code:
+                    return int(float(item["hldg_qty"]))
+
+        return 0
+
+    except Exception as e:
+        log_error(f"❌ 보유수량 조회 실패: {code} → {e}")
+        return 0
 
 
 def main():
@@ -40,16 +79,14 @@ def main():
         # 1️⃣ 환경 설정 및 토큰 발급
         config = load_env(mode="vts")  # 실전 시 "real"로 변경
         token = get_access_token(config)
-
         config["ACCESS_TOKEN"] = token
         send_slack_message("✅ Access Token 발급 완료")
 
-        # 2️⃣ 리스크 관리자 초기화 (잔고, 수익률 등)
+        # 2️⃣ 잔고 확인
         risk_manager = RiskManager(config)
         portfolio_value = risk_manager.portfolio_value
         cash_balance = risk_manager.cash_balance
-
-        send_slack_message(f"💰 현재 잔고: {portfolio_value:,.0f}원 / 💵 예수금: {cash_balance:,.0f}원")
+        send_slack_message(f"💰 잔고: {portfolio_value:,.0f}원 / 💵 예수금: {cash_balance:,.0f}원")
         send_slack_message(f"📈 현재 수익률: {risk_manager.current_return:.2%}")
 
         # 3️⃣ 현재 보유 종목 불러오기
@@ -75,7 +112,9 @@ def main():
         candidate_pool = updater._load_candidates()
         exclude_list = set(current_stocks)
         candidate_pool = candidate_pool[~candidate_pool["code"].isin(exclude_list)]
-        new_additions = candidate_pool["code"].head(num_needed).tolist() if num_needed > 0 else []
+        new_additions = (
+            candidate_pool["code"].head(num_needed).tolist() if num_needed > 0 else []
+        )
         keep_stocks.extend(new_additions)
 
         send_slack_message(
@@ -101,22 +140,26 @@ def main():
                     send_slack_message(msg)
                     continue
 
-                # ✅ 매수 시 예수금 10% 한도로 주문 수량 계산
+                # ✅ 주문 수량 계산
                 if side == "BUY":
                     qty = int(allocation // price)
                     if qty < 1:
                         msg = f"⚠️ {s} ({get_stock_name(s)}): 잔고 부족으로 매수 생략"
-                        log_error(msg)
+                        log_warning(msg)
                         send_slack_message(msg)
                         continue
-                else:
-                    # 매도 시 기본 1주 (또는 보유수량 전체로 확장 가능)
-                    qty = 1
+                else:  # 매도
+                    qty = get_holding_quantity(config, token, s)
+                    if qty <= 0:
+                        msg = f"⚠️ {s} ({get_stock_name(s)}): 보유수량 없음 → 매도 생략"
+                        log_warning(msg)
+                        send_slack_message(msg)
+                        continue
 
+                # ✅ 주문 실행
                 try:
                     result = place_order(config, token, s, qty=qty, price=price, side=side)
 
-                    # ✅ 결과 처리
                     if isinstance(result, dict):
                         if result.get("success", False):
                             msg = f"✅ {side} 주문 성공: {s} ({get_stock_name(s)}), 수량={qty}주, 주문가={price:,.0f}원"
@@ -128,32 +171,29 @@ def main():
                             log_error(msg)
                             send_slack_message(msg)
                     else:
-                        if result:
-                            msg = f"✅ {side} 주문 성공: {s} ({get_stock_name(s)}), 주문가={price:,.0f}원"
-                            log_info(msg)
-                            send_slack_message(msg)
-                        else:
-                            msg = f"⚠️ {side} 주문 실패: {s} ({get_stock_name(s)})"
-                            log_error(msg)
-                            send_slack_message(msg)
+                        msg = f"⚠️ {side} 주문 실패: {s} ({get_stock_name(s)})"
+                        log_error(msg)
+                        send_slack_message(msg)
 
                 except Exception as e:
                     msg = f"❌ {side} 주문 중 예외 발생: {s} ({get_stock_name(s)}) → {e}"
                     log_error(msg)
                     send_slack_message(msg)
 
-                time.sleep(1)  # 주문 간격 (안정성)
+                time.sleep(1)  # API 부하 방지용 텀
 
-        # 실제 주문 실행
+        # 주문 실행
         execute_order_list(sell_stocks, "SELL")
         execute_order_list(new_additions, "BUY")
 
         # 8️⃣ 주문 후 잔고 갱신
         risk_manager.refresh_portfolio()
-        send_slack_message(f"💰 주문 후 잔고: {risk_manager.portfolio_value:,.0f}원 / 💵 예수금: {risk_manager.cash_balance:,.0f}원")
+        send_slack_message(
+            f"💰 주문 후 잔고: {risk_manager.portfolio_value:,.0f}원 / 💵 예수금: {risk_manager.cash_balance:,.0f}원"
+        )
         send_slack_message(f"📈 주문 후 수익률: {risk_manager.current_return:.2%}")
 
-        # 9️⃣ 보유 종목 저장
+        # 9️⃣ 보유 종목 업데이트
         updater._save_current_stocks(keep_stocks)
         new_holdings_named = [f"{s} ({get_stock_name(s)})" for s in keep_stocks]
         send_slack_message(f"💾 새로운 보유 종목: {new_holdings_named}")
