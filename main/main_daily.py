@@ -38,17 +38,17 @@ def main():
 
     try:
         # 1️⃣ 환경 설정 및 토큰 발급
-        config = load_env(mode="vts")
+        config = load_env(mode="vts")  # 실전 시 "real"로 변경
         token = get_access_token(config)
 
-        # ✅ 토큰을 config에 추가
         config["ACCESS_TOKEN"] = token
         send_slack_message("✅ Access Token 발급 완료")
 
-        # 2️⃣ 계좌 정보 및 현재 잔고
+        # 2️⃣ 리스크 관리자 초기화 (잔고, 수익률 등)
         risk_manager = RiskManager(config)
         portfolio_value = risk_manager.portfolio_value
         cash_balance = risk_manager.cash_balance
+
         send_slack_message(f"💰 현재 잔고: {portfolio_value:,.0f}원 / 💵 예수금: {cash_balance:,.0f}원")
         send_slack_message(f"📈 현재 수익률: {risk_manager.current_return:.2%}")
 
@@ -86,10 +86,13 @@ def main():
             f"- 신규 매수 종목: {[f'{s} ({get_stock_name(s)})' for s in new_additions]}"
         )
 
-        # 7️⃣ 주문 실행 (성공/실패/사유까지 Slack 전송)
+        # 7️⃣ 주문 실행
         send_slack_message("📈 슬리피지 보정 지정가 주문 실행 시작")
 
         def execute_order_list(order_list, side):
+            total_cash = risk_manager.cash_balance
+            allocation = total_cash * 0.1  # 종목당 예수금 10%
+
             for s in order_list:
                 price = get_current_price(config, token, s)
                 if not price:
@@ -98,13 +101,25 @@ def main():
                     send_slack_message(msg)
                     continue
 
-                try:
-                    result = place_order(config, token, s, qty=1, price=price, side=side)
+                # ✅ 매수 시 예수금 10% 한도로 주문 수량 계산
+                if side == "BUY":
+                    qty = int(allocation // price)
+                    if qty < 1:
+                        msg = f"⚠️ {s} ({get_stock_name(s)}): 잔고 부족으로 매수 생략"
+                        log_error(msg)
+                        send_slack_message(msg)
+                        continue
+                else:
+                    # 매도 시 기본 1주 (또는 보유수량 전체로 확장 가능)
+                    qty = 1
 
-                    # ✅ place_order()의 반환값 기반으로 처리
+                try:
+                    result = place_order(config, token, s, qty=qty, price=price, side=side)
+
+                    # ✅ 결과 처리
                     if isinstance(result, dict):
                         if result.get("success", False):
-                            msg = f"✅ {side} 주문 성공: {s} ({get_stock_name(s)}), 수량=1주, 주문가={price:,.0f}원"
+                            msg = f"✅ {side} 주문 성공: {s} ({get_stock_name(s)}), 수량={qty}주, 주문가={price:,.0f}원"
                             log_info(msg)
                             send_slack_message(msg)
                         else:
@@ -113,7 +128,6 @@ def main():
                             log_error(msg)
                             send_slack_message(msg)
                     else:
-                        # place_order()가 단순 bool 반환하는 경우
                         if result:
                             msg = f"✅ {side} 주문 성공: {s} ({get_stock_name(s)}), 주문가={price:,.0f}원"
                             log_info(msg)
@@ -128,7 +142,7 @@ def main():
                     log_error(msg)
                     send_slack_message(msg)
 
-                time.sleep(1)  # 주문 간 간격
+                time.sleep(1)  # 주문 간격 (안정성)
 
         # 실제 주문 실행
         execute_order_list(sell_stocks, "SELL")
@@ -139,7 +153,7 @@ def main():
         send_slack_message(f"💰 주문 후 잔고: {risk_manager.portfolio_value:,.0f}원 / 💵 예수금: {risk_manager.cash_balance:,.0f}원")
         send_slack_message(f"📈 주문 후 수익률: {risk_manager.current_return:.2%}")
 
-        # 9️⃣ 새로운 보유 종목 저장 및 알림
+        # 9️⃣ 보유 종목 저장
         updater._save_current_stocks(keep_stocks)
         new_holdings_named = [f"{s} ({get_stock_name(s)})" for s in keep_stocks]
         send_slack_message(f"💾 새로운 보유 종목: {new_holdings_named}")
