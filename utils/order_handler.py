@@ -2,28 +2,43 @@ import requests
 from utils.logger import log_info, log_error
 
 
+def get_tick_size(price: float) -> int:
+    """KRX 호가단위 규칙 기반 tick size 계산"""
+    if price < 1_000:
+        return 1
+    elif price < 5_000:
+        return 5
+    elif price < 10_000:
+        return 10
+    elif price < 50_000:
+        return 50
+    elif price < 100_000:
+        return 100
+    elif price < 500_000:
+        return 500
+    else:
+        return 1000
+
+
 def place_order(config, token, code, qty, price, side="BUY"):
     """
-    슬리피지 보정 지정가 주문 (현재가 ± 호가단위 1~2틱 보정)
-    side='BUY' → 현재가보다 약간 위로 주문 (즉시 체결 유도)
-    side='SELL' → 현재가보다 약간 아래로 주문 (즉시 체결 유도)
-
-    ✅ 반환값:
-        {"success": True/False, "message": str}
+    지정가 주문 (KRX 호가단위 반영)
+    side='BUY' → 현재가보다 1~2틱 위로
+    side='SELL' → 현재가보다 1~2틱 아래로
     """
 
     try:
-        # 주문 구분 ID (모의투자)
+        # ✅ 모의투자용 tr_id
         tr_id = "VTTC0012U" if side == "BUY" else "VTTC0011U"
 
-        # 호가 단위 계산 (약 0.2%)
-        tick = max(int(price * 0.002), 10)
+        # ✅ 실제 호가단위 계산
+        tick = get_tick_size(price)
 
-        # 지정가 보정
+        # ✅ 지정가 보정
         if side == "BUY":
-            order_price = price + (tick * 2)  # 매수는 2틱 위로
+            order_price = price + (tick * 2)
         else:
-            order_price = max(price - (tick * 2), 10)  # 매도는 2틱 아래로
+            order_price = max(price - (tick * 2), tick)
 
         headers = {
             "authorization": f"Bearer {token}",
@@ -45,22 +60,17 @@ def place_order(config, token, code, qty, price, side="BUY"):
         url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/trading/order-cash"
         response = requests.post(url, headers=headers, json=payload)
 
-        # =============================
-        # ✅ 응답 상태 코드 확인
-        # =============================
         if response.status_code == 200:
             data = response.json()
             msg = data.get("msg1", "응답 메시지 없음")
 
-            if data.get("rt_cd") == "0":  # ✅ 성공
+            if data.get("rt_cd") == "0":
                 log_info(f"✅ {side} 주문 성공: {code}, 수량={qty}주, 주문가={int(order_price):,}원")
                 return {"success": True, "message": msg}
-
-            else:  # ⚠️ 실패 (사유 포함)
+            else:
                 log_error(f"⚠️ {side} 주문 실패: {code}, 사유={msg}")
                 return {"success": False, "message": msg}
-
-        else:  # ❌ HTTP 에러
+        else:
             msg = f"HTTP {response.status_code} 오류: {response.text}"
             log_error(f"❌ {side} 주문 실패 ({response.status_code}): {response.text}")
             return {"success": False, "message": msg}
