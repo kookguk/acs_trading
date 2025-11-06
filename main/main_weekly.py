@@ -1,4 +1,4 @@
-import os, json, time
+import os, json, time, requests
 from utils.slack_notifier import send_slack_message
 from utils.logger import log_info, log_error
 from utils.config import load_env, get_access_token
@@ -52,13 +52,12 @@ def main():
                 f"- Sharpe: {performance['sharpe']:.2f}"
             )
 
-        # ✅ 현재 총 평가금 조회 (계좌평가조회 API 사용)
-        import requests
+        # ✅ 현재 잔고 조회 (보유 종목 수량 포함)
         headers = {
             "authorization": f"Bearer {token}",
             "appkey": config["APP_KEY"],
             "appsecret": config["APP_SECRET"],
-            "tr_id": "VTTC8434R",  # 모의투자 잔고조회
+            "tr_id": "VTTC8434R",
             "content-type": "application/json",
         }
         url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/trading/inquire-balance"
@@ -76,13 +75,26 @@ def main():
             "CTX_AREA_NK100": "",
         }
         res = requests.get(url, headers=headers, params=params).json()
+
+        holdings = res.get("output1", [])
         portfolio_value = float(res["output2"][0]["tot_evlu_amt"])
         send_slack_message(f"💰 현재 총 평가금: {portfolio_value:,.0f}원")
 
-        # ✅ 교체 종목 전량 매도
+        # 보유 종목 딕셔너리로 변환
+        holding_dict = {
+            h["pdno"]: int(float(h["hldg_qty"]))
+            for h in holdings if int(float(h["hldg_qty"])) > 0
+        }
+
+        # ✅ 교체 대상 전량 매도
         if sell_targets:
             send_slack_message("📉 교체 대상 전량 매도 시작")
             for code in sell_targets:
+                if code not in holding_dict:
+                    send_slack_message(f"⚠️ {code} ({get_stock_name(code)}) → 보유 수량 없음, 건너뜀")
+                    continue
+
+                qty = holding_dict[code]  # 실제 보유 수량
                 try:
                     price_url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/quotations/inquire-price"
                     price_params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
@@ -93,13 +105,12 @@ def main():
                         "tr_id": "FHKST01010100",
                         "content-type": "application/json",
                     }
-                    res = requests.get(price_url, headers=price_headers, params=price_params)
-                    price = float(res.json()["output"]["stck_prpr"])
+                    res_p = requests.get(price_url, headers=price_headers, params=price_params)
+                    price = float(res_p.json()["output"]["stck_prpr"])
 
-                    # 전량 매도 시 수량 = 1주로 가정 (혹은 추후 실제 보유 수량 반영 가능)
-                    result = place_order(config, token, code, qty=1, price=price, side="SELL")
+                    result = place_order(config, token, code, qty=qty, price=price, side="SELL")
                     msg = (
-                        f"✅ 매도 성공: {code} ({get_stock_name(code)}), 가격={price:,.0f}"
+                        f"✅ 매도 성공: {code} ({get_stock_name(code)}), {qty}주 @ {price:,.0f}"
                         if result["success"]
                         else f"⚠️ 매도 실패: {code}, 사유={result['message']}"
                     )
@@ -116,7 +127,6 @@ def main():
 
             for code in buy_targets:
                 try:
-                    # 현재가 조회
                     price_url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/quotations/inquire-price"
                     price_params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
                     price_headers = {
@@ -126,8 +136,8 @@ def main():
                         "tr_id": "FHKST01010100",
                         "content-type": "application/json",
                     }
-                    res = requests.get(price_url, headers=price_headers, params=price_params)
-                    price = float(res.json()["output"]["stck_prpr"])
+                    res_p = requests.get(price_url, headers=price_headers, params=price_params)
+                    price = float(res_p.json()["output"]["stck_prpr"])
 
                     qty = int(invest_per_stock // price)
                     if qty <= 0:
