@@ -5,7 +5,6 @@ from utils.config import load_env, get_access_token
 from utils.data_handler import get_stock_name
 from utils.order_handler import place_order
 from backtest.update_backtest import PortfolioUpdater
-from risk.risk_module import RiskManager
 
 
 def main():
@@ -17,7 +16,6 @@ def main():
         config = load_env(mode="vts")
         token = get_access_token(config)
         config["ACCESS_TOKEN"] = token
-        risk_manager = RiskManager(config)
 
         base_dir = os.path.dirname(os.path.dirname(__file__))
         current_path = os.path.join(base_dir, "utils", "stocks", "current_stocks.json")
@@ -29,72 +27,130 @@ def main():
         old_named = [f"{s} ({get_stock_name(s)})" for s in old_stocks]
         send_slack_message(f"📁 기존 보유 종목: {old_named}")
 
-        # ✅ 종목 업데이트 + 백테스트 실행
+        # ✅ 백테스트 실행 및 교체 종목 결정
         updater = PortfolioUpdater(mode="vts")
         new_stocks, performance = updater.run(return_metrics=True)
         new_named = [f"{s} ({get_stock_name(s)})" for s in new_stocks]
-        send_slack_message(f"📁 신규 보유 종목: {new_named}")
+        send_slack_message(f"📁 신규 포트폴리오: {new_named}")
 
-        # ✅ 백테스트 결과 보고
+        # ✅ 교체 대상 계산
+        sell_targets = [s for s in old_stocks if s not in new_stocks]
+        buy_targets = [s for s in new_stocks if s not in old_stocks]
+
+        send_slack_message(
+            f"📊 교체 대상 요약\n"
+            f"- 매도 대상: {[f'{s} ({get_stock_name(s)})' for s in sell_targets]}\n"
+            f"- 신규 매수 대상: {[f'{s} ({get_stock_name(s)})' for s in buy_targets]}"
+        )
+
+        # ✅ 백테스트 성과 보고
         if performance:
             send_slack_message(
-                f"📊 백테스트 결과 요약:\n"
-                f"- 📈 수익률: {performance['return']*100:.2f}%\n"
-                f"- 📉 변동성: {performance['volatility']*100:.2f}%\n"
-                f"- ⚙️ Sharpe: {performance['sharpe']:.2f}"
+                f"📈 백테스트 결과\n"
+                f"- 수익률: {performance['return']*100:.2f}%\n"
+                f"- 변동성: {performance['volatility']*100:.2f}%\n"
+                f"- Sharpe: {performance['sharpe']:.2f}"
             )
 
-        # ✅ 현재 잔고 확인
-        portfolio_value = risk_manager.portfolio_value
-        cash_balance = risk_manager.cash_balance
-        send_slack_message(f"💰 현재 평가금: {portfolio_value:,.0f}원 / 💵 예수금: {cash_balance:,.0f}원")
+        # ✅ 현재 총 평가금 조회 (계좌평가조회 API 사용)
+        import requests
+        headers = {
+            "authorization": f"Bearer {token}",
+            "appkey": config["APP_KEY"],
+            "appsecret": config["APP_SECRET"],
+            "tr_id": "VTTC8434R",  # 모의투자 잔고조회
+            "content-type": "application/json",
+        }
+        url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/trading/inquire-balance"
+        params = {
+            "CANO": config["CANO"],
+            "ACNT_PRDT_CD": config["ACNT_PRDT_CD"],
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "01",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        res = requests.get(url, headers=headers, params=params).json()
+        portfolio_value = float(res["output2"][0]["tot_evlu_amt"])
+        send_slack_message(f"💰 현재 총 평가금: {portfolio_value:,.0f}원")
 
-        # ✅ 기존 종목 전량 매도
-        send_slack_message("📉 기존 종목 전량 매도 시작")
-        for code in old_stocks:
-            try:
-                result = place_order(config, token, code, qty=1, price=risk_manager.get_current_price(code), side="SELL")
-                msg = (
-                    f"✅ 매도 성공: {code} ({get_stock_name(code)})"
-                    if result["success"]
-                    else f"⚠️ 매도 실패: {code} ({get_stock_name(code)}), 사유={result['message']}"
-                )
-                send_slack_message(msg)
-                time.sleep(1)
-            except Exception as e:
-                send_slack_message(f"❌ 매도 중 오류 발생: {code} → {e}")
+        # ✅ 교체 종목 전량 매도
+        if sell_targets:
+            send_slack_message("📉 교체 대상 전량 매도 시작")
+            for code in sell_targets:
+                try:
+                    price_url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/quotations/inquire-price"
+                    price_params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
+                    price_headers = {
+                        "authorization": f"Bearer {token}",
+                        "appkey": config["APP_KEY"],
+                        "appsecret": config["APP_SECRET"],
+                        "tr_id": "FHKST01010100",
+                        "content-type": "application/json",
+                    }
+                    res = requests.get(price_url, headers=price_headers, params=price_params)
+                    price = float(res.json()["output"]["stck_prpr"])
 
-        time.sleep(3)
-        send_slack_message("✅ 기존 종목 전량 매도 완료")
+                    # 전량 매도 시 수량 = 1주로 가정 (혹은 추후 실제 보유 수량 반영 가능)
+                    result = place_order(config, token, code, qty=1, price=price, side="SELL")
+                    msg = (
+                        f"✅ 매도 성공: {code} ({get_stock_name(code)}), 가격={price:,.0f}"
+                        if result["success"]
+                        else f"⚠️ 매도 실패: {code}, 사유={result['message']}"
+                    )
+                    send_slack_message(msg)
+                    time.sleep(1)
+                except Exception as e:
+                    send_slack_message(f"❌ 매도 중 오류 발생: {code} → {e}")
+            send_slack_message("✅ 매도 완료")
 
-        # ✅ 새 포트폴리오로 매수 (잔고의 10%씩)
-        invest_per_stock = portfolio_value * 0.10
-        send_slack_message(f"📈 신규 종목 매수 시작 (종목당 {invest_per_stock:,.0f}원)")
+        # ✅ 신규 종목 매수 (잔고의 10%씩)
+        if buy_targets:
+            invest_per_stock = portfolio_value * 0.10
+            send_slack_message(f"📈 신규 종목 매수 시작 (종목당 약 {invest_per_stock:,.0f}원)")
 
-        for code in new_stocks:
-            try:
-                current_price = risk_manager.get_current_price(code)
-                qty = int(invest_per_stock // current_price)
-                if qty == 0:
-                    send_slack_message(f"⚠️ {code} ({get_stock_name(code)}) → 금액 부족으로 건너뜀")
-                    continue
+            for code in buy_targets:
+                try:
+                    # 현재가 조회
+                    price_url = f"{config['BASE_URL']}/uapi/domestic-stock/v1/quotations/inquire-price"
+                    price_params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
+                    price_headers = {
+                        "authorization": f"Bearer {token}",
+                        "appkey": config["APP_KEY"],
+                        "appsecret": config["APP_SECRET"],
+                        "tr_id": "FHKST01010100",
+                        "content-type": "application/json",
+                    }
+                    res = requests.get(price_url, headers=price_headers, params=price_params)
+                    price = float(res.json()["output"]["stck_prpr"])
 
-                result = place_order(config, token, code, qty=qty, price=current_price, side="BUY")
-                msg = (
-                    f"✅ 매수 성공: {code} ({get_stock_name(code)}), 수량={qty}주"
-                    if result["success"]
-                    else f"⚠️ 매수 실패: {code} ({get_stock_name(code)}), 사유={result['message']}"
-                )
-                send_slack_message(msg)
-                time.sleep(1)
-            except Exception as e:
-                send_slack_message(f"❌ 매수 중 오류 발생: {code} → {e}")
+                    qty = int(invest_per_stock // price)
+                    if qty <= 0:
+                        send_slack_message(f"⚠️ {code} ({get_stock_name(code)}) → 금액 부족으로 건너뜀")
+                        continue
 
-        send_slack_message("🎯 ✅ 주간 백테스트 및 종목 교체 + 매수 완료")
-        log_info("✅ 주간 종목 업데이트 및 매수 완료")
+                    result = place_order(config, token, code, qty=qty, price=price, side="BUY")
+                    msg = (
+                        f"✅ 매수 성공: {code} ({get_stock_name(code)}), 수량={qty}주, 가격={price:,.0f}"
+                        if result["success"]
+                        else f"⚠️ 매수 실패: {code}, 사유={result['message']}"
+                    )
+                    send_slack_message(msg)
+                    time.sleep(1)
+                except Exception as e:
+                    send_slack_message(f"❌ 매수 중 오류 발생: {code} → {e}")
+            send_slack_message("✅ 신규 종목 매수 완료")
+
+        send_slack_message("🎯 ✅ 주간 포트폴리오 교체 및 매매 완료")
+        log_info("✅ 주간 포트폴리오 교체 + 매매 완료")
 
     except Exception as e:
-        send_slack_message(f"❌ 오류 발생: {str(e)}", "🚨")
+        send_slack_message(f"❌ 오류 발생: {str(e)}")
         log_error(str(e))
         raise e
 
